@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Mouse Trail ASCII Distortion</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #030712;
+            overflow: hidden;
+            font-family: 'Courier New', Courier, monospace;
+        }
+
+        #info {
+            position: absolute;
+            top: 20px;
+            width: 100%;
+            text-align: center;
+            color: #38bdf8;
+            font-size: 14px;
+            letter-spacing: 3px;
+            pointer-events: none;
+            text-transform: uppercase;
+            text-shadow: 0 0 15px rgba(56, 189, 248, 0.7);
+            z-index: 10;
+        }
+
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="info">Interactive Mouse Distortion // ASCII Shader</div>
+
+    <!-- Import Three.js via ES modules -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        let camera, scene, renderer, material;
+        let clock = new THREE.Clock();
+        
+        // Mouse tracking coordinates normalized (0.0 to 1.0) with smooth damping
+        const mouse = new THREE.Vector2(0.5, 0.5);
+        const targetMouse = new THREE.Vector2(0.5, 0.5);
+
+        init();
+        animate();
+
+        function init() {
+            // 1. Orthographic camera for full-screen viewport rendering
+            camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+            scene = new THREE.Scene();
+
+            const geometry = new THREE.PlaneGeometry(2, 2);
+
+            // 2. Custom GLSL Shader Material handling mouse interaction & ASCII mapping
+            material = new THREE.ShaderMaterial({
+                uniforms: {
+                    uTime: { value: 0.0 },
+                    uResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+                    uMouse: { value: new THREE.Vector2(0.5, 0.5) }
+                },
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    uniform float uTime;
+                    uniform vec2 uResolution;
+                    uniform vec2 uMouse;
+                    varying vec2 vUv;
+
+                    // Pseudo-random generator
+                    float random(vec2 st) {
+                        return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123);
+                    }
+
+                    // Procedural character glyph generator
+                    float charShape(vec2 uv, float seed) {
+                        vec2 grid = floor(uv * vec2(4.0, 6.0));
+                        float rand = random(grid + seed);
+                        return step(0.35, rand) * step(grid.x, 3.0) * step(grid.y, 5.0);
+                    }
+
+                    void main() {
+                        vec2 st = gl_FragCoord.xy / uResolution.xy;
+                        st.x *= uResolution.x / uResolution.y; // Aspect correction
+                        
+                        vec2 correctedMouse = uMouse;
+                        correctedMouse.x *= uResolution.x / uResolution.y;
+
+                        // Calculate distance from current pixel to mouse position for ripple effect
+                        float dist = distance(st, correctedMouse);
+                        
+                        // Create a wave distortion offset based on distance and time
+                        float wave = sin(dist * 30.0 - uTime * 6.0) * 0.04;
+                        float falloff = smoothstep(0.4, 0.0, dist); // Localize distortion near cursor
+                        
+                        // Warp UV coordinates based on mouse wave interaction
+                        vec2 distortedSt = st + (normalize(st - correctedMouse) * wave * falloff);
+
+                        // Grid resolution for ASCII blocks
+                        vec2 grid = vec2(75.0, 50.0);
+                        vec2 uv = distortedSt * grid;
+                        vec2 ipos = floor(uv);
+                        vec2 fpos = fract(uv);
+
+                        // Character brightness and selection
+                        float n = random(ipos + floor(uTime * 2.0));
+                        float c = charShape(fpos, ipos.x + ipos.y);
+
+                        // Dynamic color shifting based on distance to mouse
+                        vec3 baseColor = vec3(0.08, 0.4, 0.8); // Deep blue
+                        vec3 highlightColor = vec3(0.2, 0.9, 1.0); // Bright cyan
+                        
+                        vec3 col = mix(baseColor, highlightColor, falloff) * c * n;
+                        
+                        // Add subtle background grid glow
+                        col += vec3(0.02, 0.05, 0.1) * n;
+
+                        gl_FragColor = vec4(col, 1.0);
+                    }
+                `
+            });
+
+            const mesh = new THREE.Mesh(geometry, material);
+            scene.add(mesh);
+
+            // 3. Renderer Setup
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            document.body.appendChild(renderer.domElement);
+
+            // Event Listeners
+            window.addEventListener('resize', onWindowResize);
+            window.addEventListener('mousemove', onMouseMove);
+        }
+
+        function onWindowResize() {
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            material.uniforms.uResolution.value.set(window.innerWidth, window.innerHeight);
+        }
+
+        function onMouseMove(event) {
+            // Normalize mouse coordinates between 0 and 1, flipping Y axis for WebGL
+            targetMouse.x = event.clientX / window.innerWidth;
+            targetMouse.y = 1.0 - (event.clientY / window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Smoothly damp mouse coordinates for fluid lag effect (lerp)
+            mouse.lerp(targetMouse, 0.1);
+
+            material.uniforms.uTime.value = clock.getElapsedTime();
+            material.uniforms.uMouse.value.copy(mouse);
+
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>

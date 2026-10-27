@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Webcam ASCII Art</title>
+    <style>
+        body {
+            background-color: #0b0f19;
+            color: #38bdf8;
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            overflow: hidden;
+        }
+
+        h1 {
+            font-size: 1.2rem;
+            margin-bottom: 10px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+
+        #ascii-output {
+            font-size: 7px;
+            line-height: 6px;
+            white-space: pre;
+            background: #020617;
+            padding: 16px;
+            border-radius: 8px;
+            border: 1px solid #1e293b;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+            letter-spacing: 1px;
+        }
+
+        /* Hide the raw video element since we only want the ASCII output */
+        video {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Webcam ASCII Stream</h1>
+    <video id="webcam" autoplay playsinline></video>
+    <div id="ascii-output">Initializing camera feed...</div>
+
+    <script>
+        const video = document.getElementById('webcam');
+        const output = document.getElementById('ascii-output');
+
+        // Density ramp from darkest to lightest characters
+        const density = "Ñ@#W$9876543210?!abc;:+i,_. ";
+
+        // Grid resolution (columns and rows of text characters)
+        const cols = 120;
+        const rows = 60;
+
+        // Create an offscreen canvas to downsample the video frames
+        const canvas = document.createElement('canvas');
+        canvas.width = cols;
+        canvas.height = rows;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { width: 320, height: 240 } 
+                });
+                video.srcObject = stream;
+                video.play();
+                
+                video.addEventListener('loadeddata', () => {
+                    requestAnimationFrame(processFrame);
+                });
+            } catch (err) {
+                output.innerText = "Error: Webcam access denied or unavailable.\n" + err.message;
+            }
+        }
+
+        function processFrame() {
+            // Draw current video frame onto the low-resolution canvas
+            ctx.drawImage(video, 0, 0, cols, rows);
+            const pixels = ctx.getImageData(0, 0, cols, rows).data;
+
+            let asciiFrame = "";
+
+            for (let y = 0; y < rows; y++) {
+                for (let x = 0; x < cols; x++) {
+                    const offset = (y * cols + x) * 4;
+                    const r = pixels[offset];
+                    const g = pixels[offset + 1];
+                    const b = pixels[offset + 2];
+
+                    // Calculate perceived luminance using standard ITU-R BT.709 weights
+                    const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                    
+                    // Map luminance (0-255) to an index in the density ramp string
+                    const charIndex = Math.floor((luminance / 255) * (density.length - 1));
+                    
+                    asciiFrame += density[charIndex];
+                }
+                asciiFrame += "\n";
+            }
+
+            output.innerText = asciiFrame;
+            
+            // Loop for the next frame
+            requestAnimationFrame(processFrame);
+        }
+
+        startCamera();
+    </script>
+</body>
+</html>

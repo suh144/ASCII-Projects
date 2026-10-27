@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Matrix Digital Rain - Custom GLSL Shader</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #000;
+            overflow: hidden;
+            font-family: 'Courier New', Courier, monospace;
+        }
+
+        #info {
+            position: absolute;
+            top: 20px;
+            width: 100%;
+            text-align: center;
+            color: #4ade80;
+            font-size: 14px;
+            letter-spacing: 2px;
+            pointer-events: none;
+            text-shadow: 0 0 10px rgba(74, 222, 128, 0.6);
+            z-index: 10;
+        }
+
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="info">Matrix Digital Rain - GPU Fragment Shader</div>
+
+    <!-- Import Three.js via ES modules -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        let camera, scene, renderer, material;
+        let clock = new THREE.Clock();
+
+        init();
+        animate();
+
+        function init() {
+            // 1. Orthographic camera for full-screen 2D rendering
+            camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+            scene = new THREE.Scene();
+
+            // 2. Full-screen plane geometry
+            const geometry = new THREE.PlaneGeometry(2, 2);
+
+            // 3. Custom GLSL Shader Material
+            material = new THREE.ShaderMaterial({
+                uniforms: {
+                    uTime: { value: 0.0 },
+                    uResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) }
+                },
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    uniform float uTime;
+                    uniform vec2 uResolution;
+                    varying vec2 vUv;
+
+                    // Pseudo-random generator
+                    float random(vec2 st) {
+                        return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123);
+                    }
+
+                    // Procedural glyph generator to simulate matrix characters
+                    float charShape(vec2 uv, float seed) {
+                        vec2 grid = floor(uv * vec2(4.0, 6.0));
+                        float rand = random(grid + seed);
+                        return step(0.4, rand) * step(grid.x, 3.0) * step(grid.y, 5.0);
+                    }
+
+                    void main() {
+                        vec2 st = gl_FragCoord.xy / uResolution.xy;
+                        st.x *= uResolution.x / uResolution.y; // Aspect ratio correction
+
+                        // Grid density (columns and rows)
+                        vec2 grid = vec2(60.0, 40.0);
+                        vec2 uv = st * grid;
+                        vec2 ipos = floor(uv);
+                        vec2 fpos = fract(uv);
+
+                        // Column fall speed and vertical offset
+                        float speed = 8.0 + random(vec2(ipos.x, 1.0)) * 12.0;
+                        float yOffset = uTime * speed;
+                        
+                        // Calculate vertical stream position
+                        float yPos = mod(ipos.y + yOffset, grid.y);
+                        float stream = smoothstep(0.0, 15.0, grid.y - yPos);
+
+                        // Character appearance mask
+                        float c = charShape(fpos, ipos.x + floor(yPos));
+
+                        // Trail fading effect from head to tail
+                        float trail = 1.0 - (yPos / grid.y);
+                        trail = clamp(trail, 0.0, 1.0);
+
+                        // Head of the stream is bright white/green, tail is dark green
+                        vec3 col = vec3(0.0, trail * c, 0.0);
+                        
+                        // Highlight the leading edge of each falling line
+                        if (yPos < 1.5) {
+                            col = vec3(0.6, 1.0, 0.6) * c;
+                        }
+
+                        gl_FragColor = vec4(col, 1.0);
+                    }
+                `
+            });
+
+            const mesh = new THREE.Mesh(geometry, material);
+            scene.add(mesh);
+
+            // 4. Renderer setup
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            document.body.appendChild(renderer.domElement);
+
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function onWindowResize() {
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            material.uniforms.uResolution.value.set(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            material.uniforms.uTime.value = clock.getElapsedTime();
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>

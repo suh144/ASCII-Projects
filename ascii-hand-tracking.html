@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hand Tracking ASCII Distortion</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #030712;
+            overflow: hidden;
+            font-family: 'Courier New', Courier, monospace;
+        }
+
+        #info {
+            position: absolute;
+            top: 20px;
+            width: 100%;
+            text-align: center;
+            color: #38bdf8;
+            font-size: 14px;
+            letter-spacing: 3px;
+            pointer-events: none;
+            text-transform: uppercase;
+            text-shadow: 0 0 15px rgba(56, 189, 248, 0.7);
+            z-index: 10;
+        }
+
+        /* Hidden video element used by MediaPipe */
+        video {
+            display: none;
+        }
+
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+    </style>
+
+    <!-- MediaPipe CDN Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <div id="info">Show Hand to Camera // ASCII Ripple Distortion</div>
+    <video id="webcam" autoplay playsinline></video>
+
+    <!-- Import Three.js via ES modules -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        let camera, scene, renderer, material;
+        let clock = new THREE.Clock();
+
+        // Hand position tracking vectors (normalized 0.0 to 1.0)
+        const handPos = new THREE.Vector2(0.5, 0.5);
+        const targetHandPos = new THREE.Vector2(0.5, 0.5);
+
+        initThreeJS();
+        initMediaPipe();
+        animate();
+
+        function initThreeJS() {
+            // 1. Orthographic camera & scene
+            camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+            scene = new THREE.Scene();
+
+            const geometry = new THREE.PlaneGeometry(2, 2);
+
+            // 2. Custom GLSL Shader Material with Hand Position Uniform
+            material = new THREE.ShaderMaterial({
+                uniforms: {
+                    uTime: { value: 0.0 },
+                    uResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+                    uHandPos: { value: new THREE.Vector2(0.5, 0.5) },
+                    uHasHand: { value: 0.0 }
+                },
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    uniform float uTime;
+                    uniform vec2 uResolution;
+                    uniform vec2 uHandPos;
+                    uniform float uHasHand;
+                    varying vec2 vUv;
+
+                    float random(vec2 st) {
+                        return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123);
+                    }
+
+                    float charShape(vec2 uv, float seed) {
+                        vec2 grid = floor(uv * vec2(4.0, 6.0));
+                        float rand = random(grid + seed);
+                        return step(0.35, rand) * step(grid.x, 3.0) * step(grid.y, 5.0);
+                    }
+
+                    void main() {
+                        vec2 st = gl_FragCoord.xy / uResolution.xy;
+                        st.x *= uResolution.x / uResolution.y;
+
+                        vec2 correctedHand = uHandPos;
+                        correctedHand.x *= uResolution.x / uResolution.y;
+
+                        // Calculate ripple effect relative to hand position if detected
+                        float dist = distance(st, correctedHand);
+                        float wave = sin(dist * 35.0 - uTime * 7.0) * 0.05;
+                        float falloff = smoothstep(0.45, 0.0, dist) * uHasHand;
+                        
+                        vec2 distortedSt = st + (normalize(st - correctedHand) * wave * falloff);
+
+                        // ASCII grid setup
+                        vec2 grid = vec2(75.0, 50.0);
+                        vec2 uv = distortedSt * grid;
+                        vec2 ipos = floor(uv);
+                        vec2 fpos = fract(uv);
+
+                        float n = random(ipos + floor(uTime * 2.0));
+                        float c = charShape(fpos, ipos.x + ipos.y);
+
+                        vec3 baseColor = vec3(0.08, 0.4, 0.8);
+                        vec3 highlightColor = vec3(0.2, 0.9, 1.0);
+                        
+                        vec3 col = mix(baseColor, highlightColor, falloff) * c * n;
+                        col += vec3(0.02, 0.05, 0.1) * n;
+
+                        gl_FragColor = vec4(col, 1.0);
+                    }
+                `
+            });
+
+            const mesh = new THREE.Mesh(geometry, material);
+            scene.add(mesh);
+
+            // 3. Renderer Setup
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            document.body.appendChild(renderer.domElement);
+
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function initMediaPipe() {
+            const videoElement = document.getElementById('webcam');
+
+            const hands = new Hands({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+            });
+
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.6,
+                minTrackingConfidence: 0.6
+            });
+
+            hands.onResults((results) => {
+                if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                    // Landmark 8 is the tip of the index finger
+                    const indexTip = results.multiHandLandmarks[0][8];
+                    
+                    // MediaPipe X is mirrored from webcam feed, so we invert (1.0 - x)
+                    targetHandPos.x = 1.0 - indexTip.x;
+                    targetHandPos.y = 1.0 - indexTip.y; // Invert Y for WebGL coordinates
+                    
+                    material.uniforms.uHasHand.value = 1.0;
+                } else {
+                    // Fade out effect if no hand is visible
+                    material.uniforms.uHasHand.value = 0.0;
+                }
+            });
+
+            const cameraUtils = new Camera(videoElement, {
+                onFrame: async () => {
+                    await hands.send({ image: videoElement });
+                },
+                width: 640,
+                height: 480
+            });
+            cameraUtils.start();
+        }
+
+        function onWindowResize() {
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            material.uniforms.uResolution.value.set(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Smoothly damp hand coordinates using lerp for fluid tracking
+            handPos.lerp(targetHandPos, 0.15);
+
+            material.uniforms.uTime.value = clock.getElapsedTime();
+            material.uniforms.uHandPos.value.copy(handPos);
+
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Record and Export Canvas Animation</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #030712;
+            overflow: hidden;
+            font-family: 'Courier New', Courier, monospace;
+        }
+
+        #ui {
+            position: absolute;
+            top: 20px;
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        #info {
+            color: #38bdf8;
+            font-size: 14px;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            text-shadow: 0 0 15px rgba(56, 189, 248, 0.7);
+        }
+
+        button {
+            pointer-events: auto;
+            background: #0ea5e9;
+            color: #ffffff;
+            border: none;
+            padding: 10px 20px;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 13px;
+            font-weight: bold;
+            letter-spacing: 1px;
+            border-radius: 6px;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(14, 165, 233, 0.4);
+            transition: background 0.2s, transform 0.1s;
+        }
+
+        button:hover {
+            background: #0284c7;
+        }
+
+        button:active {
+            transform: scale(0.95);
+        }
+
+        button.recording {
+            background: #ef4444;
+            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.6; }
+            100% { opacity: 1; }
+        }
+
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui">
+        <div id="info">ASCII Animation Recorder</div>
+        <button id="record-btn">Start Recording</button>
+    </div>
+
+    <!-- Import Three.js via ES modules -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        let camera, scene, renderer, material;
+        let clock = new THREE.Clock();
+        
+        // Recording variables
+        let mediaRecorder;
+        let recordedChunks = [];
+        const recordBtn = document.getElementById('record-btn');
+
+        init();
+        animate();
+
+        function init() {
+            camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+            scene = new THREE.Scene();
+
+            const geometry = new THREE.PlaneGeometry(2, 2);
+
+            material = new THREE.ShaderMaterial({
+                uniforms: {
+                    uTime: { value: 0.0 },
+                    uResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) }
+                },
+                vertexShader: `
+                    varying vec2 vUv;
+                    void main() {
+                        vUv = uv;
+                        gl_Position = vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    uniform float uTime;
+                    uniform vec2 uResolution;
+                    varying vec2 vUv;
+
+                    float random(vec2 st) {
+                        return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123);
+                    }
+
+                    float charShape(vec2 uv, float seed) {
+                        vec2 grid = floor(uv * vec2(4.0, 6.0));
+                        float rand = random(grid + seed);
+                        return step(0.35, rand) * step(grid.x, 3.0) * step(grid.y, 5.0);
+                    }
+
+                    void main() {
+                        vec2 st = gl_FragCoord.xy / uResolution.xy;
+                        st.x *= uResolution.x / uResolution.y;
+
+                        vec2 grid = vec2(75.0, 50.0);
+                        vec2 uv = st * grid;
+                        vec2 ipos = floor(uv);
+                        vec2 fpos = fract(uv);
+
+                        float n = random(ipos + floor(uTime * 2.0));
+                        float c = charShape(fpos, ipos.x + ipos.y);
+
+                        vec3 baseColor = vec3(0.08, 0.4, 0.8);
+                        vec3 highlightColor = vec3(0.2, 0.9, 1.0);
+                        
+                        vec3 col = mix(baseColor, highlightColor, 0.5) * c * n;
+                        col += vec3(0.02, 0.05, 0.1) * n;
+
+                        gl_FragColor = vec4(col, 1.0);
+                    }
+                `
+            });
+
+            const mesh = new THREE.Mesh(geometry, material);
+            scene.add(mesh);
+
+            // Setup renderer with preserveDrawingBuffer enabled (crucial for capturing frames)
+            renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            document.body.appendChild(renderer.domElement);
+
+            window.addEventListener('resize', onWindowResize);
+            recordBtn.addEventListener('click', toggleRecording);
+        }
+
+        function toggleRecording() {
+            if (!mediaRecorder || mediaRecorder.state === "inactive") {
+                startRecording();
+            } else {
+                stopRecording();
+            }
+        }
+
+        function startRecording() {
+            recordedChunks = [];
+            
+            // Capture a high-framerate stream directly from the WebGL canvas
+            const stream = renderer.domElement.captureStream(60);
+            
+            try {
+                mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9' });
+            } catch (e) {
+                // Fallback codec if VP9 is unsupported
+                mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+            }
+
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    recordedChunks.push(event.data);
+                }
+            };
+
+            mediaRecorder.onstop = () => {
+                const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                const url = URL.createObjectURL(blob);
+                
+                // Automatically create a download link for the exported video file
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = url;
+                a.download = 'ascii-animation.webm';
+                document.body.appendChild(a);
+                a.click();
+                
+                setTimeout(() => {
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                }, 100);
+            };
+
+            mediaRecorder.start();
+            recordBtn.textContent = "Stop Recording & Export";
+            recordBtn.classList.add('recording');
+        }
+
+        function stopRecording() {
+            mediaRecorder.stop();
+            recordBtn.textContent = "Start Recording";
+            recordBtn.classList.remove('recording');
+        }
+
+        function onWindowResize() {
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            material.uniforms.uResolution.value.set(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            material.uniforms.uTime.value = clock.getElapsedTime();
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>

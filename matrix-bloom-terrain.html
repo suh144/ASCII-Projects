@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Matrix Terrain with Unreal Bloom</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #020617;
+            overflow: hidden;
+            font-family: 'Courier New', Courier, monospace;
+        }
+
+        #info {
+            position: absolute;
+            top: 20px;
+            width: 100%;
+            text-align: center;
+            color: #4ade80;
+            font-size: 14px;
+            letter-spacing: 3px;
+            pointer-events: none;
+            text-transform: uppercase;
+            text-shadow: 0 0 15px rgba(74, 222, 128, 0.9);
+            z-index: 10;
+        }
+
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="info">Matrix Cyber-Terrain // Unreal Bloom Effect</div>
+    <div id="canvas-container"></div>
+
+    <!-- Import Three.js and Postprocessing modules via ES modules -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+        let scene, camera, renderer, terrainMesh, composer;
+        let clock = new THREE.Clock();
+
+        init();
+        animate();
+
+        function init() {
+            // 1. Scene setup
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x020617);
+            scene.fog = new THREE.FogExp2(0x020617, 0.003);
+
+            // 2. Camera setup
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
+            camera.position.set(0, 40, 250);
+            camera.lookAt(0, 0, 0);
+
+            // 3. Terrain Geometry
+            const geometry = new THREE.PlaneGeometry(600, 600, 50, 50);
+            geometry.rotateX(-Math.PI / 2);
+
+            // 4. Vibrant Neon Wireframe Material
+            const material = new THREE.MeshBasicMaterial({
+                color: 0x22c55e,
+                wireframe: true,
+                transparent: true,
+                opacity: 0.9
+            });
+
+            terrainMesh = new THREE.Mesh(geometry, material);
+            scene.add(terrainMesh);
+
+            // Horizon Grid Helper
+            const gridHelper = new THREE.GridHelper(1000, 50, 0x4ade80, 0x065f46);
+            gridHelper.position.y = -10;
+            scene.add(gridHelper);
+
+            // 5. WebGL Renderer Setup
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+            // 6. Post-Processing Pipeline (EffectComposer + UnrealBloomPass)
+            const renderScene = new RenderPass(scene, camera);
+            
+            // Parameters: (resolution, strength, radius, threshold)
+            const bloomPass = new UnrealBloomPass(
+                new THREE.Vector2(window.innerWidth, window.innerHeight),
+                1.8,  // Strength of the glow
+                0.4,  // Radius of dispersion
+                0.1   // Threshold (lower threshold means more elements catch the bloom)
+            );
+
+            composer = new EffectComposer(renderer);
+            composer.addPass(renderScene);
+            composer.addPass(bloomPass);
+
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const elapsedTime = clock.getElapsedTime();
+
+            // Animate terrain vertices
+            const positionAttribute = terrainMesh.geometry.attributes.position;
+            for (let i = 0; i < positionAttribute.count; i++) {
+                const x = positionAttribute.getX(i);
+                const z = positionAttribute.getZ(i);
+                
+                const waveY = Math.sin(x * 0.02 + elapsedTime * 2.0) * Math.cos(z * 0.02 + elapsedTime * 1.5) * 15.0 
+                            + Math.sin(x * 0.05 - elapsedTime) * 5.0;
+                
+                positionAttribute.setY(i, waveY);
+            }
+            positionAttribute.needsUpdate = true;
+
+            // Forward camera drift
+            camera.position.z = 250 - (elapsedTime * 15) % 200;
+
+            // Render through the post-processing composer instead of raw renderer
+            composer.render();
+        }
+    </script>
+</body>
+</html>
